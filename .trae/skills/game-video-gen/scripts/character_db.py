@@ -384,11 +384,17 @@ def main():
     args = parser.parse_args()
 
     if args.command == "search":
+        seen_keys = set()
         results = []
 
         if args.name:
-            results = search_by_name(args.name, args.game)
-            if results:
+            name_results = search_by_name(args.name, args.game)
+            for r in name_results:
+                key = (r["game_key"], r["char_key"])
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    results.append(r)
+            if name_results:
                 print(f"Found {len(results)} match(es) by name:")
                 for r in results:
                     identity = r["data"]["identity"]
@@ -404,7 +410,11 @@ def main():
                     for r in visual_results:
                         identity = r["data"]["identity"]
                         print(f"  [score: {r.get('match_score', 0)}] {identity.get('name_cn', '')} ({identity.get('name', '')}) - {identity.get('game_cn', '')}")
-                    results.extend(visual_results)
+                    for r in visual_results:
+                        key = (r["game_key"], r["char_key"])
+                        if key not in seen_keys:
+                            seen_keys.add(key)
+                            results.append(r)
             else:
                 print(f"Visual profile not found: {args.visual_profile}", file=sys.stderr)
 

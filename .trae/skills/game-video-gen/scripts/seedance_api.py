@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import urllib.parse
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
@@ -20,9 +21,6 @@ VOLC_SERVICE = "cv"
 VOLC_ENDPOINT = f"https://{VOLC_HOST}"
 VOLC_VERSION = "2022-08-31"
 
-DEFAULT_TIMEOUT = int(os.environ.get("JIMENG_TIMEOUT", "600"))
-
-
 def get_credentials():
     ak = os.environ.get("VOLC_ACCESS_KEY_ID")
     sk = os.environ.get("VOLC_SECRET_ACCESS_KEY")
@@ -34,12 +32,28 @@ def get_credentials():
     return ak, sk
 
 
+RETRIABLE_ERRORS = {50429, 50430, 50500, 50501, 50511, 50512, 50516, 50517, 50519}
+ALLOWED_IMAGE_FORMATS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".gif"}
+MAX_IMAGE_SIZE_MB = 30
+
+
 def _hmac_sha256(key, msg):
     if isinstance(key, str):
         key = key.encode("utf-8")
     if isinstance(msg, str):
         msg = msg.encode("utf-8")
     return hmac.new(key, msg, hashlib.sha256).digest()
+
+def _validate_image(image_path):
+    ext = Path(image_path).suffix.lower()
+    if ext not in ALLOWED_IMAGE_FORMATS:
+        print(f"WARNING: Image format '{ext}' may not be supported. Jimeng API recommends JPEG/PNG.", file=sys.stderr)
+
+    if os.path.exists(image_path):
+        size_mb = os.path.getsize(image_path) / (1024 * 1024)
+        if size_mb > MAX_IMAGE_SIZE_MB:
+            print(f"ERROR: Image too large ({size_mb:.1f} MB). Max {MAX_IMAGE_SIZE_MB} MB.", file=sys.stderr)
+            sys.exit(1)
 
 
 def _sha256_hex(data):
@@ -123,7 +137,8 @@ def _make_signed_request(ak, sk, action, body_dict):
     headers = {}
     headers = _sign_request(ak, sk, "POST", path, query_params, body_bytes, headers)
 
-    url = f"{VOLC_ENDPOINT}?{urllib.parse.urlencode(query_params, quote_via=urllib.parse.quote)}"
+    sorted_query = dict(sorted(query_params.items()))
+    url = f"{VOLC_ENDPOINT}?{urllib.parse.urlencode(sorted_query, quote_via=urllib.parse.quote)}"
 
     resp = requests.post(url, data=body_bytes, headers=headers, timeout=30)
     return resp
@@ -163,6 +178,7 @@ def generate_video(request_path, output_path):
         elif images[0].startswith("data:"):
             body["binary_data_base64"] = [images[0].split(",", 1)[1] if "," in images[0] else images[0]]
         else:
+            _validate_image(images[0])
             with open(images[0], "rb") as img_file:
                 b64 = base64.b64encode(img_file.read()).decode("utf-8")
                 body["binary_data_base64"] = [b64]
@@ -329,9 +345,10 @@ def poll_status(task_id, output_path, interval=10, timeout=None):
             message = data.get("message", "Unknown error")
             print(f"  [{poll_count}] API error: code={code}, message={message}", file=sys.stderr)
 
-            if code in (50429, 50430, 50500, 50501):
-                print(f"  Retriable error, waiting {interval}s...", file=sys.stderr)
-                time.sleep(interval)
+            if code in RETRIABLE_ERRORS:
+                retry_wait = min(interval * (2 ** (poll_count // 3)), 60)
+                print(f"  [{poll_count}] Retriable error (code={code}), retrying in {retry_wait}s...", file=sys.stderr)
+                time.sleep(retry_wait)
                 continue
 
             result.update({
