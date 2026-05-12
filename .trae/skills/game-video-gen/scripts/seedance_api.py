@@ -35,6 +35,7 @@ def get_credentials():
 RETRIABLE_ERRORS = {50429, 50430, 50500, 50501, 50511, 50512, 50516, 50517, 50519}
 ALLOWED_IMAGE_FORMATS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".gif"}
 MAX_IMAGE_SIZE_MB = 30
+DEFAULT_TIMEOUT = 600
 
 
 def _hmac_sha256(key, msg):
